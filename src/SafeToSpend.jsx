@@ -1,6 +1,6 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 
-/* ----------------------------------------------------------------- */
+/* ------------------------------------------------------------------ */
 /*  Tokens                                                             */
 /* ------------------------------------------------------------------ */
 const C = {
@@ -44,6 +44,19 @@ const FREQ_DAYS = { monthly: 30, quarterly: 90 };
    non-breaking space (1 450 000), which reads as no separator at all on a
    phone — commas are clearer here, in both languages. */
 const GROUP_LOCALE = "en-GB";
+
+/* GoatCounter events. Only the name of what happened is ever sent —
+   no amounts, no field values, nothing the user typed. Fails silently
+   if the script is blocked or has not loaded. */
+function track(name) {
+  try {
+    if (typeof window !== "undefined" && window.goatcounter?.count) {
+      window.goatcounter.count({ path: name, title: name, event: true });
+    }
+  } catch {
+    /* analytics must never break the tool */
+  }
+}
 
 const scaleFor = (frequency, amount, horizon) =>
   frequency === "oneoff" ? amount : amount * (horizon / FREQ_DAYS[frequency]);
@@ -466,6 +479,13 @@ export default function SafeToSpend() {
   const [showCalc, setShowCalc] = useState(false);
   const [freq, setFreq] = useState(DEFAULT_FREQ);
   const [freqTouched, setFreqTouched] = useState({});
+  const fired = useRef({});
+
+  const trackOnce = useCallback((name) => {
+    if (fired.current[name]) return;
+    fired.current[name] = true;
+    track(name);
+  }, []);
   const [v, setV] = useState(EMPTY_VALUES);
   const [focusedField, setFocusedField] = useState(null);
 
@@ -540,9 +560,10 @@ export default function SafeToSpend() {
     (k) => (e) => {
       const raw = e.target.value;
       if (!/^[0-9.,\s\u00A0\u202F-]*$/.test(raw)) return;
+      if (raw !== "") trackOnce("calc_started");
       setV((p) => ({ ...p, [k]: formatLive(raw) }));
     },
-    [formatLive]
+    [formatLive, trackOnce]
   );
 
   const handleFocus = useCallback((k) => () => setFocusedField(k), []);
@@ -653,6 +674,7 @@ export default function SafeToSpend() {
     );
     setFreq(DEFAULT_FREQ);
     setFreqTouched({});
+    track("demo_loaded");
   };
 
   /* Switching currency swaps the sample figures too, but only while the
@@ -668,6 +690,13 @@ export default function SafeToSpend() {
     });
     setCurrency(next);
   };
+
+  /* a completed calculation = the user reached the result tab with
+     enough entered for a figure to be shown */
+  useEffect(() => {
+    if (tab === 2) trackOnce("tab_result");
+    if (tab === 2 && calc.started) trackOnce("calc_completed");
+  }, [tab, calc.started, trackOnce]);
 
   const negative = calc.safe < 0;
   const bandIndex =
@@ -801,7 +830,10 @@ export default function SafeToSpend() {
                 <button
                   key={d}
                   type="button"
-                  onClick={() => setHorizon(d)}
+                  onClick={() => {
+                    setHorizon(d);
+                    track(`period_${d}`);
+                  }}
                   className="flex-1 rounded-lg py-1.5 text-xs transition-colors"
                   style={{
                     background: active ? "rgba(255,255,255,0.94)" : "rgba(255,255,255,0.08)",
